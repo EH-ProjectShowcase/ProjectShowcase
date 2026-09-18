@@ -23,7 +23,7 @@ async function loadProjects() {
 function populateDepartmentFilter() {
 
     const select = document.getElementById("departmentFilter");
-    const departments = [...new Set(projects.map(p => p.department).filter(Boolean))].sort();
+    const departments = [...new Set(projects.map(p => p.department || (p.domain || []).join(", ")).filter(Boolean))].sort();
 
     departments.forEach(dept => {
 
@@ -43,13 +43,15 @@ function applyFilters() {
 
     const filtered = projects.filter(project => {
 
-        const matchesDept = !dept || project.department === dept;
+        const projectDept = project.department || (project.domain || []).join(", ");
+        const matchesDept = !dept || projectDept === dept;
 
+        const tags = project.tech || project.domain || [];
         const matchesSearch = !query ||
             project.title.toLowerCase().includes(query) ||
             project.student.toLowerCase().includes(query) ||
             project.summary.toLowerCase().includes(query) ||
-            (project.tech || []).some(t => t.toLowerCase().includes(query));
+            tags.some(t => t.toLowerCase().includes(query));
 
         return matchesDept && matchesSearch;
 
@@ -77,19 +79,19 @@ function displayProjects(data) {
 
                 <p><strong>${project.student}</strong></p>
 
-                <p>${project.department}</p>
+                <p>${project.department || (project.domain || []).join(", ")}</p>
 
                 <p>${project.summary}</p>
 
                 <div class="tags">
 
-                    ${(project.tech || []).map(t => `<span>${t}</span>`).join("")}
+                    ${(project.tech || project.domain || []).map(t => `<span>${t}</span>`).join("")}
 
                 </div>
 
                 <div class="buttons">
 
-                    <a href="${project.github}" target="_blank">GitHub</a>
+                    ${project.github ? `<a href="${project.github}" target="_blank">GitHub</a>` : ""}
 
                     ${project.demo ? `<a href="${project.demo}" target="_blank">Live Demo</a>` : ""}
 
@@ -113,7 +115,7 @@ function updateStats(){
 
     document.getElementById("studentCount").textContent = projects.length;
 
-    const departments = [...new Set(projects.map(p=>p.department))];
+    const departments = [...new Set(projects.map(p=>p.department || (p.domain || []).join(", ")).filter(Boolean))];
 
     document.getElementById("departmentCount").textContent = departments.length;
 

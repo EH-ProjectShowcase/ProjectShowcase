@@ -207,7 +207,7 @@ async function main() {
   const col = Object.fromEntries(header.map((h, i) => [h.trim(), i]));
 
   // Validate required columns exist
-  const requiredCols = ["Approved", "Your Full Name", "Project Title"];
+  const requiredCols = ["Approved", "Student Full Name", "Project Title"];
   for (const c of requiredCols) {
     if (!(c in col)) {
       console.error(`❌  Missing required column "${c}" in sheet header.`);
@@ -238,16 +238,13 @@ async function main() {
   const newProjects = [];       // project objects for projects.json
 
   for (const row of approved) {
-    const name       = (row[col["Your Full Name"]]        || "").trim();
-    const title      = (row[col["Project Title"]]          || "").trim();
-    const department = (row[col["Department"]]              || "").trim();
-    const batch      = (row[col["Batch"]]                   || "").trim();
-    const summary    = (row[col["Short Description"]]       || "").trim();
-    const stackRaw   = (row[col["Tech Stack"]]              || "").trim();
-    const githubUrl  = (row[col["Source Code URL"]]         || "").trim();
-    const demoUrl    = (row[col["Live / Demo URL"]]         || "").trim();
-    const imageUrl   = (row[col["Screenshot (upload)"]]     || "").trim();
-    const zipUrl     = (row[col["Implementation (.zip)"]]   || "").trim();
+    const name       = (row[col["Student Full Name"]]                  || "").trim();
+    const email      = (row[col["Student Email Address"]]              || "").trim();
+    const title      = (row[col["Project Title"]]                      || "").trim();
+    const domain     = (row[col["Project Domain"]]                     || "").trim();
+    const summary    = (row[col["Project Description"]]                || "").trim();
+    const imageUrl   = (row[col["Upload Project Screenshots or Images"]] || "").trim();
+    const zipUrl     = (row[col["Upload Project Source Code (Zip file)"]] || "").trim();
 
     const slug = slugify(`${name}-${title}`);
     if (existingIds.has(slug)) {
@@ -257,13 +254,13 @@ async function main() {
 
     console.log(`\n🔄  Processing "${title}" by ${name}…`);
 
-    // Parse tech stack — accept comma-separated or JSON array
+    // Parse domain/tech — accept comma-separated or JSON array
     let tech = [];
-    if (stackRaw) {
+    if (domain) {
       try {
-        tech = JSON.parse(stackRaw);
+        tech = JSON.parse(domain);
       } catch {
-        tech = stackRaw.split(",").map(s => s.trim()).filter(Boolean);
+        tech = domain.split(",").map(s => s.trim()).filter(Boolean);
       }
     }
 
@@ -316,12 +313,9 @@ async function main() {
       id: slug,
       title,
       student: name,
-      department,
-      batch,
+      email,
+      domain: tech,
       summary,
-      tech,
-      github: githubUrl || "#",
-      demo: demoUrl || "",
       image: imagePath,
     };
 
