@@ -8,9 +8,54 @@ async function loadProjects() {
 
     projects = await response.json();
 
+    populateDepartmentFilter();
+
     displayProjects(projects);
 
     updateStats();
+
+    // Wire up search and filter
+    document.getElementById("searchBox").addEventListener("input", applyFilters);
+    document.getElementById("departmentFilter").addEventListener("change", applyFilters);
+
+}
+
+function populateDepartmentFilter() {
+
+    const select = document.getElementById("departmentFilter");
+    const departments = [...new Set(projects.map(p => p.department).filter(Boolean))].sort();
+
+    departments.forEach(dept => {
+
+        const option = document.createElement("option");
+        option.value = dept;
+        option.textContent = dept;
+        select.appendChild(option);
+
+    });
+
+}
+
+function applyFilters() {
+
+    const query = document.getElementById("searchBox").value.toLowerCase().trim();
+    const dept  = document.getElementById("departmentFilter").value;
+
+    const filtered = projects.filter(project => {
+
+        const matchesDept = !dept || project.department === dept;
+
+        const matchesSearch = !query ||
+            project.title.toLowerCase().includes(query) ||
+            project.student.toLowerCase().includes(query) ||
+            project.summary.toLowerCase().includes(query) ||
+            (project.tech || []).some(t => t.toLowerCase().includes(query));
+
+        return matchesDept && matchesSearch;
+
+    });
+
+    displayProjects(filtered);
 
 }
 
@@ -38,13 +83,17 @@ function displayProjects(data) {
 
                 <div class="tags">
 
-                    ${project.tech.map(t => `<span>${t}</span>`).join("")}
+                    ${(project.tech || []).map(t => `<span>${t}</span>`).join("")}
 
                 </div>
 
                 <div class="buttons">
 
                     <a href="${project.github}" target="_blank">GitHub</a>
+
+                    ${project.demo ? `<a href="${project.demo}" target="_blank">Live Demo</a>` : ""}
+
+                    ${project.zipUrl ? `<a href="${project.zipUrl}" class="btn-download" download>⬇ Download .zip</a>` : ""}
 
                 </div>
 

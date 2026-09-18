@@ -1,5 +1,8 @@
 # Byte-compiled / optimized / DLL files
 __pycache__/
+
+# Node.js
+node_modules/
 *.py[codz]
 *$py.class
 
@@ -165,7 +168,7 @@ venv.bak/
 .ropeproject
 
 # mkdocs documentation
-/site
+# /site  ← disabled: our site/ directory IS the GitHub Pages source
 
 # mypy
 .mypy_cache/

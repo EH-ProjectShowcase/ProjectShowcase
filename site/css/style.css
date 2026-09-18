@@ -332,6 +332,24 @@ body {
 }
 
 /* ------------------------------
+   Download Button
+------------------------------ */
+
+.btn-download {
+
+    background: #059669 !important;
+
+    color: white !important;
+
+}
+
+.btn-download:hover {
+
+    background: #047857 !important;
+
+}
+
+/* ------------------------------
    Footer
 ------------------------------ */
 

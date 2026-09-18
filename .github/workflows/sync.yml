@@ -1,0 +1,33 @@
+name: Sync Submissions
+
+on:
+  schedule:
+    - cron: "0 * * * *"      # every hour
+  workflow_dispatch:          # manual trigger for testing
+
+permissions:
+  contents: write            # needed to push commits and create releases
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        working-directory: scripts
+        run: npm install
+
+      - name: Run sync
+        working-directory: scripts
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          SHEET_ID: ${{ secrets.SHEET_ID }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO_OWNER: ${{ github.repository_owner }}
+          REPO_NAME: ${{ github.event.repository.name }}
+        run: node sync.js
