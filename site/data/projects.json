@@ -54,17 +54,5 @@
     "summary": "dskjaskjdhakjs",
     "image": "images/default.webp",
     "zipUrl": "https://github.com/EH-ProjectShowcase/ProjectShowcase/releases/download/project-test2-ffefdgs/test2-ffefdgs.zip"
-  },
-  {
-    "id": "rahul-testproject",
-    "title": "testproject",
-    "student": "rahul",
-    "email": "test@gmail.com",
-    "domain": [
-      "Data Science"
-    ],
-    "summary": "",
-    "image": "images/default.webp",
-    "github": "https://github.com/EH-ProjectShowcase/rahul-testproject"
   }
 ]
