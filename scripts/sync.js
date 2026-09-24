@@ -405,6 +405,12 @@ async function main() {
     const imageUrl   = (row[col["Upload Project Screenshots or Images"]] || "").trim();
     const zipUrl     = (row[col["Upload Project Source Code (Zip file)"]] || "").trim();
 
+    // ── FIX: Skip rows with no project title ─────────────────────
+    if (!title) {
+      console.warn(`\n⚠  Skipping row for "${name}" — Project Title is blank. Fix it in the sheet.`);
+      continue;
+    }
+
     const slug = slugify(`${name}-${title}`);
     if (existingIds.has(slug)) {
       console.log(`⏭  "${title}" (${slug}) already exists — skipping.`);
@@ -450,8 +456,8 @@ async function main() {
         console.log(`  📥  Downloading zip from Drive…`);
         let zipBuffer = await downloadDriveFile(zipDriveId);
 
-        // Google Drive returns an HTML "virus scan warning" page for large files
-        // instead of the actual content. Detect and bypass it.
+        // Google Drive returns an HTML "virus scan warning" page for large files.
+        // Detect and bypass it.
         const prefix = zipBuffer.slice(0, 5).toString("utf8");
         if (prefix.startsWith("<!DOC") || prefix.startsWith("<html")) {
           console.log(`  🔄  Drive returned HTML (large-file warning) — retrying with confirm bypass…`);
@@ -462,52 +468,59 @@ async function main() {
         if (zipBuffer.length > MAX_ZIP_BYTES) {
           const sizeMB = (zipBuffer.length / 1024 / 1024).toFixed(1);
           console.warn(`  ⚠  Zip is ${sizeMB} MB — exceeds ${MAX_ZIP_BYTES / 1024 / 1024} MB cap. Skipping.`);
-        } else {
-          const sizeMB = (zipBuffer.length / 1024 / 1024).toFixed(1);
-          console.log(`  📦  Zip downloaded (${sizeMB} MB).`);
-
-          // ── Validate the zip BEFORE creating the repo ──────────
-          // This ensures we never create a blank repo: if the zip is
-          // unreadable or empty, we log and skip rather than leaving
-          // an empty shell behind.
-          let zipValid = false;
-          try {
-            const testZip = new AdmZip(zipBuffer);
-            const testEntries = testZip.getEntries().filter(e => !e.isDirectory);
-            if (testEntries.length === 0) {
-              console.warn(`  ⚠  Zip appears empty (no files found) — skipping repo creation.`);
-            } else {
-              zipValid = true;
-              console.log(`  ✅  Zip looks valid (${testEntries.length} file(s)) — creating org repo…`);
-            }
-          } catch (zipErr) {
-            console.warn(`  ⚠  Zip is invalid or corrupted: ${zipErr.message} — skipping repo creation.`);
-          }
-
-          if (zipValid) {
-            // Create the repo in the org only now that we know the zip is good
-            projectRepoUrl = await createProjectRepo(slug, title, summary, name, tech);
-
-            // Unzip and commit all files
-            const commitSha = await commitZipToRepo(slug, zipBuffer, {
-              title, studentName: name, summary, tech,
-            });
-
-            if (commitSha) {
-              driveIdsToDelete.push(zipDriveId);
-              console.log(`  🎉  Source code live at ${projectRepoUrl}`);
-            } else {
-              // Shouldn't normally reach here given zipValid check above,
-              // but guard anyway with a fallback README.
-              console.warn(`  ⚠  Commit returned null unexpectedly — writing fallback README.`);
-              await commitFallbackReadme(slug, { title, studentName: name, summary, tech });
-            }
-          }
+          // Size exceeded — do NOT add to projects.json; retry if student re-uploads smaller zip
+          continue;
         }
+
+        const sizeMB = (zipBuffer.length / 1024 / 1024).toFixed(1);
+        console.log(`  📦  Zip downloaded (${sizeMB} MB).`);
+
+        // ── Validate the zip BEFORE creating the repo ──────────
+        // This ensures we never create a blank repo: if the zip is
+        // unreadable or empty, we log and continue (retry next run).
+        let zipValid = false;
+        try {
+          const testZip = new AdmZip(zipBuffer);
+          const testEntries = testZip.getEntries().filter(e => !e.isDirectory);
+          if (testEntries.length === 0) {
+            console.warn(`  ⚠  Zip appears empty (no files found).`);
+          } else {
+            zipValid = true;
+            console.log(`  ✅  Zip looks valid (${testEntries.length} file(s)) — creating org repo…`);
+          }
+        } catch (zipErr) {
+          console.warn(`  ⚠  Zip is invalid or corrupted: ${zipErr.message}`);
+        }
+
+        if (!zipValid) {
+          // ── FIX: do NOT add to projects.json — retry next sync ──
+          console.warn(`  ⏭  NOT adding to projects.json — will retry on next sync run.`);
+          continue;
+        }
+
+        // Zip is good — create the repo and commit files
+        projectRepoUrl = await createProjectRepo(slug, title, summary, name, tech);
+
+        const commitSha = await commitZipToRepo(slug, zipBuffer, {
+          title, studentName: name, summary, tech,
+        });
+
+        if (commitSha) {
+          driveIdsToDelete.push(zipDriveId);
+          console.log(`  🎉  Source code live at ${projectRepoUrl}`);
+        } else {
+          // commitZipToRepo returned null (empty zip slipped through) — safety fallback
+          console.warn(`  ⚠  Commit returned null — writing fallback README.`);
+          await commitFallbackReadme(slug, { title, studentName: name, summary, tech });
+        }
+
       } catch (err) {
-        console.warn(`  ⚠  Failed processing zip for "${title}" (Drive ID: ${zipDriveId}): ${err.message}`);
-        console.warn(`      💡 Ensure the GH_PAT has 'repo' scope and your account can create repos in the "${orgName}" org.`);
-        console.warn(`      💡 Also ensure the Form's Drive upload folder is shared with the service account.`);
+        // ── FIX: do NOT add to projects.json on any error — retries next run ──
+        console.warn(`  ❌  Failed processing zip for "${title}": ${err.message}`);
+        console.warn(`      💡 Most likely cause: the Drive upload folder is NOT shared with`);
+        console.warn(`         your service account. Share the folder and it will work next run.`);
+        console.warn(`      ⏭  NOT adding to projects.json — will retry on next sync run.`);
+        continue;
       }
     }
 
