@@ -30,5 +30,17 @@
     "github": "#",
     "demo": "",
     "image": "images/default.webp"
+  },
+  {
+    "id": "test1-project",
+    "title": "project",
+    "student": "test1",
+    "email": "rahul@gmail.com",
+    "domain": [
+      "Cybersecurity"
+    ],
+    "summary": "blehlbeal",
+    "image": "images/default.webp",
+    "zipUrl": "https://github.com/rahul12043/ProjectShowcase/releases/download/project-test1-project/test1-project.zip"
   }
 ]
