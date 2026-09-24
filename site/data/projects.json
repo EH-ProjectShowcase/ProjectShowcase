@@ -30,16 +30,5 @@
     "github": "#",
     "demo": "",
     "image": "images/default.webp"
-  },
-  {
-    "id": "test-test",
-    "title": "test",
-    "student": "Test",
-    "email": "etst@gmail.com",
-    "domain": [
-      "Web Development"
-    ],
-    "summary": "test",
-    "image": "images/default.webp"
   }
 ]
