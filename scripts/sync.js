@@ -1,21 +1,24 @@
 #!/usr/bin/env node
 /**
  * sync.js — Pulls approved rows from a Google Sheet, downloads & compresses
- * screenshots from Google Drive, uploads implementation zips to GitHub Releases,
- * commits everything to the repo, and writes an updated projects.json that the
- * static site consumes.
+ * screenshots from Google Drive, creates a separate GitHub repo per project
+ * in the org with the unzipped source code, commits screenshots and
+ * projects.json to the showcase repo, and auto-deploys via GitHub Pages.
  *
  * Environment variables (all required):
  *   GOOGLE_SERVICE_ACCOUNT_JSON — full JSON key for a GCP service account
  *   SHEET_ID                    — the Google Sheets spreadsheet ID
- *   GITHUB_TOKEN                — a token with repo write access (commits + releases)
- *   REPO_OWNER                  — GitHub owner  (e.g. "rahul12043")
+ *   GH_PAT                     — Personal Access Token with repo + org scope
+ *   REPO_OWNER                  — GitHub owner  (e.g. "MyCollege-Projects")
  *   REPO_NAME                   — GitHub repo   (e.g. "ProjectShowcase")
+ *   ORG_NAME                    — GitHub org where project repos are created
+ *                                 (defaults to REPO_OWNER if not set)
  */
 
 import { google } from "googleapis";
 import { Octokit } from "@octokit/rest";
 import sharp from "sharp";
+import AdmZip from "adm-zip";
 
 // ── Config ────────────────────────────────────────────────────────────
 const SHEET_RANGE   = "Form Responses 1!A1:Z";
@@ -38,9 +41,10 @@ const auth  = new google.auth.GoogleAuth({
 const sheets = google.sheets({ version: "v4", auth });
 const drive  = google.drive({ version: "v3", auth });
 
-const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
+const octokit = new Octokit({ auth: process.env.GH_PAT });
 const owner   = process.env.REPO_OWNER;
 const repo    = process.env.REPO_NAME;
+const orgName = process.env.ORG_NAME || owner;
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
@@ -91,7 +95,7 @@ async function deleteDriveFile(fileId) {
   }
 }
 
-// ── GitHub helpers (commit via REST API, no local git needed) ─────────
+// ── GitHub helpers (commit to the SHOWCASE repo via REST API) ─────────
 
 async function getRef(branch = "main") {
   const { data } = await octokit.git.getRef({ owner, repo, ref: `heads/${branch}` });
@@ -119,74 +123,163 @@ async function updateRef(sha, branch = "main") {
   await octokit.git.updateRef({ owner, repo, ref: `heads/${branch}`, sha });
 }
 
-// ── GitHub Release helpers ────────────────────────────────────────────
+// ── Org repo helpers (create a repo per project, commit unzipped files) ──
 
 /**
- * Get or create a GitHub Release for a given tag.
- * Returns the release ID.
+ * Create a public repo in the org for a student project.
+ * If the repo already exists, returns its URL without re-creating.
  */
-async function getOrCreateRelease(tag, projectTitle) {
-  // Try to find existing release by tag
+async function createProjectRepo(slug, title, summary, studentName, tech) {
+  // Check if repo already exists
   try {
-    const { data } = await octokit.repos.getReleaseByTag({ owner, repo, tag });
-    console.log(`  📦  Found existing release for tag "${tag}" (id: ${data.id})`);
-    return data.id;
+    const { data } = await octokit.repos.get({ owner: orgName, repo: slug });
+    console.log(`  📁  Repo ${orgName}/${slug} already exists → ${data.html_url}`);
+    return data.html_url;
   } catch (err) {
     if (err.status !== 404) throw err;
   }
 
-  // Create the tag reference first (pointing at HEAD)
-  const headSha = await getRef();
-  try {
-    await octokit.git.createRef({ owner, repo, ref: `refs/tags/${tag}`, sha: headSha });
-  } catch (err) {
-    // Tag might already exist from a previous partial run
-    if (err.status !== 422) throw err;
-  }
+  // Build a nice description
+  const desc = [
+    title,
+    studentName ? `by ${studentName}` : "",
+    tech.length ? `(${tech.join(", ")})` : "",
+  ].filter(Boolean).join(" — ").slice(0, 350);
 
-  // Create the release
-  const { data } = await octokit.repos.createRelease({
-    owner,
-    repo,
-    tag_name: tag,
-    name: `${projectTitle} — Implementation`,
-    body: `Implementation zip for "${projectTitle}". Uploaded automatically by the sync pipeline.`,
-    draft: false,
-    prerelease: false,
+  const { data } = await octokit.repos.createInOrg({
+    org: orgName,
+    name: slug,
+    description: desc,
+    homepage: "",
+    private: false,
+    has_issues: false,
+    has_projects: false,
+    has_wiki: false,
+    auto_init: false,  // we create the initial commit ourselves
   });
-  console.log(`  📦  Created new release for tag "${tag}" (id: ${data.id})`);
-  return data.id;
+
+  console.log(`  📁  Created repo ${orgName}/${slug} → ${data.html_url}`);
+  return data.html_url;
 }
 
 /**
- * Upload a zip buffer as a release asset.
- * Returns the browser_download_url for the asset.
+ * Unzip a buffer and commit all files to a repo as its initial commit.
+ * If the zip has a single root folder (e.g. project-name/), it is stripped
+ * so files land at the repo root.
+ *
+ * Also generates a README.md with project info if one doesn't exist in the zip.
+ *
+ * Returns the commit SHA, or null if the zip was empty.
  */
-async function uploadReleaseAsset(releaseId, filename, zipBuffer) {
-  // Delete any pre-existing asset with the same name (idempotent re-runs)
-  try {
-    const { data: assets } = await octokit.repos.listReleaseAssets({
-      owner, repo, release_id: releaseId, per_page: 50,
-    });
-    const existing = assets.find(a => a.name === filename);
-    if (existing) {
-      await octokit.repos.deleteReleaseAsset({ owner, repo, asset_id: existing.id });
-      console.log(`  🔄  Replaced existing asset "${filename}"`);
-    }
-  } catch { /* no assets yet — fine */ }
+async function commitZipToRepo(targetRepo, zipBuffer, { title, studentName, summary, tech }) {
+  const zip = new AdmZip(zipBuffer);
+  const entries = zip.getEntries();
 
-  const { data } = await octokit.repos.uploadReleaseAsset({
-    owner,
-    repo,
-    release_id: releaseId,
-    name: filename,
-    data: zipBuffer,
-    headers: {
-      "content-type": "application/zip",
-      "content-length": zipBuffer.length,
-    },
+  // ── Detect single root folder (very common in zips) ───────────
+  const topLevelNames = new Set();
+  for (const entry of entries) {
+    const first = entry.entryName.split("/")[0];
+    if (first) topLevelNames.add(first);
+  }
+  // Strip prefix only if every entry lives under one folder
+  const hasSingleRoot = topLevelNames.size === 1
+    && entries.some(e => e.isDirectory && e.entryName === [...topLevelNames][0] + "/");
+  const stripPrefix = hasSingleRoot ? [...topLevelNames][0] + "/" : "";
+  if (stripPrefix) {
+    console.log(`  📂  Stripping zip root folder: "${stripPrefix.slice(0, -1)}/"`);
+  }
+
+  // ── Create blobs for every file ───────────────────────────────
+  const treeItems = [];
+  let hasReadme = false;
+
+  for (const entry of entries) {
+    if (entry.isDirectory) continue;
+
+    let filePath = entry.entryName;
+
+    // Strip the single root folder prefix
+    if (stripPrefix && filePath.startsWith(stripPrefix)) {
+      filePath = filePath.slice(stripPrefix.length);
+    }
+    if (!filePath) continue;
+
+    // Track if zip already contains a README
+    if (/^readme\.md$/i.test(filePath)) hasReadme = true;
+
+    // Skip OS junk files
+    if (filePath.startsWith("__MACOSX/") || filePath.endsWith(".DS_Store") || filePath === "Thumbs.db") {
+      continue;
+    }
+
+    const content = entry.getData().toString("base64");
+    const { data: blob } = await octokit.git.createBlob({
+      owner: orgName,
+      repo: targetRepo,
+      content,
+      encoding: "base64",
+    });
+
+    treeItems.push({ path: filePath, mode: "100644", type: "blob", sha: blob.sha });
+  }
+
+  if (!treeItems.length) {
+    console.warn(`  ⚠  Zip contains no files — skipping repo commit.`);
+    return null;
+  }
+
+  // ── Auto-generate README.md if zip didn't include one ─────────
+  if (!hasReadme) {
+    const readme = [
+      `# ${title}`,
+      "",
+      `**Student:** ${studentName}`,
+      tech.length ? `**Tech Stack:** ${tech.join(", ")}` : "",
+      "",
+      summary || "",
+      "",
+      "---",
+      `*This repository was automatically created by the [Project Showcase](https://github.com/${owner}/${repo}) pipeline.*`,
+      "",
+    ].filter(line => line !== undefined).join("\n");
+
+    const { data: readmeBlob } = await octokit.git.createBlob({
+      owner: orgName,
+      repo: targetRepo,
+      content: Buffer.from(readme).toString("base64"),
+      encoding: "base64",
+    });
+    treeItems.push({ path: "README.md", mode: "100644", type: "blob", sha: readmeBlob.sha });
+  }
+
+  console.log(`  📄  ${treeItems.length} file(s) to commit`);
+
+  // ── Create tree → commit → branch ref ─────────────────────────
+  // No base_tree because this is the initial commit (empty repo)
+  const { data: tree } = await octokit.git.createTree({
+    owner: orgName,
+    repo: targetRepo,
+    tree: treeItems,
   });
-  return data.browser_download_url;
+
+  const { data: commit } = await octokit.git.createCommit({
+    owner: orgName,
+    repo: targetRepo,
+    message: `feat: initial commit — ${title}`,
+    tree: tree.sha,
+    parents: [],   // initial commit has no parents
+  });
+
+  // Create the main branch pointing to this commit
+  await octokit.git.createRef({
+    owner: orgName,
+    repo: targetRepo,
+    ref: "refs/heads/main",
+    sha: commit.sha,
+  });
+
+  console.log(`  ✅  Committed ${treeItems.length} files to ${orgName}/${targetRepo} (${commit.sha.slice(0, 7)})`);
+  return commit.sha;
 }
 
 // ── Main ──────────────────────────────────────────────────────────────
@@ -233,7 +326,7 @@ async function main() {
   const existingIds = new Set(existing.map(p => p.id));
 
   // 4. Process each approved row
-  const newBlobs = [];          // { path, sha, mode, type } — files to commit
+  const newBlobs = [];          // { path, sha, mode, type } — files to commit to showcase repo
   const driveIdsToDelete = [];  // Drive file IDs to purge after commit
   const newProjects = [];       // project objects for projects.json
 
@@ -243,6 +336,8 @@ async function main() {
     const title      = (row[col["Project Title"]]                      || "").trim();
     const domain     = (row[col["Project Domain"]]                     || "").trim();
     const summary    = (row[col["Project Description"]]                || "").trim();
+    const githubUrl  = (row[col["GitHub / Source Code URL"]]           || "").trim();
+    const demoUrl    = (row[col["Live / Demo URL"]]                    || "").trim();
     const imageUrl   = (row[col["Upload Project Screenshots or Images"]] || "").trim();
     const zipUrl     = (row[col["Upload Project Source Code (Zip file)"]] || "").trim();
 
@@ -277,13 +372,14 @@ async function main() {
         driveIdsToDelete.push(imgDriveId);
         console.log(`  📸  Screenshot compressed → ${imagePath}`);
       } catch (err) {
-        console.warn(`  ⚠  Failed to download screenshot: ${err.message}`);
+        console.warn(`  ⚠  Failed to download screenshot (Drive ID: ${imgDriveId}): ${err.message}`);
         console.warn(`      Falling back to default image.`);
+        console.warn(`      💡 Ensure the Form's Drive upload folder is shared with the service account.`);
       }
     }
 
-    // ── Zip (Implementation) → GitHub Release ────────────────────
-    let zipDownloadUrl = "";
+    // ── Zip → Create org repo with unzipped source code ──────────
+    let projectRepoUrl = githubUrl;   // default to manually-provided URL
     const zipDriveId = extractDriveId(zipUrl);
     if (zipDriveId) {
       try {
@@ -293,22 +389,32 @@ async function main() {
         // Size gate
         if (zipBuffer.length > MAX_ZIP_BYTES) {
           const sizeMB = (zipBuffer.length / 1024 / 1024).toFixed(1);
-          console.warn(`  ⚠  Zip is ${sizeMB} MB — exceeds ${MAX_ZIP_BYTES / 1024 / 1024} MB cap. Skipping upload.`);
+          console.warn(`  ⚠  Zip is ${sizeMB} MB — exceeds ${MAX_ZIP_BYTES / 1024 / 1024} MB cap. Skipping.`);
         } else {
-          const tag = `project-${slug}`;
-          const releaseId = await getOrCreateRelease(tag, title);
-          const assetName = `${slug}.zip`;
-          zipDownloadUrl = await uploadReleaseAsset(releaseId, assetName, zipBuffer);
-          driveIdsToDelete.push(zipDriveId);
           const sizeMB = (zipBuffer.length / 1024 / 1024).toFixed(1);
-          console.log(`  📦  Zip uploaded to release (${sizeMB} MB) → ${zipDownloadUrl}`);
+          console.log(`  📦  Zip downloaded (${sizeMB} MB) — creating org repo…`);
+
+          // Create the repo in the org
+          projectRepoUrl = await createProjectRepo(slug, title, summary, name, tech);
+
+          // Unzip and commit all files
+          const commitSha = await commitZipToRepo(slug, zipBuffer, {
+            title, studentName: name, summary, tech,
+          });
+
+          if (commitSha) {
+            driveIdsToDelete.push(zipDriveId);
+            console.log(`  🎉  Source code live at ${projectRepoUrl}`);
+          }
         }
       } catch (err) {
-        console.warn(`  ⚠  Failed to process zip: ${err.message}`);
+        console.warn(`  ⚠  Failed to create project repo (Drive ID: ${zipDriveId}): ${err.message}`);
+        console.warn(`      💡 Ensure the GH_PAT has 'repo' scope and your account can create repos in the "${orgName}" org.`);
+        console.warn(`      💡 Also ensure the Form's Drive upload folder is shared with the service account.`);
       }
     }
 
-    // Build project object matching the existing schema
+    // Build project object
     const project = {
       id: slug,
       title,
@@ -319,10 +425,9 @@ async function main() {
       image: imagePath,
     };
 
-    // Only add zipUrl if we actually uploaded one
-    if (zipDownloadUrl) {
-      project.zipUrl = zipDownloadUrl;
-    }
+    // Only add optional URL fields if they have values
+    if (projectRepoUrl)  project.github = projectRepoUrl;
+    if (demoUrl)         project.demo   = demoUrl;
 
     newProjects.push(project);
     existingIds.add(slug);
@@ -341,13 +446,13 @@ async function main() {
   );
   newBlobs.push({ path: DATA_FILE, sha: jsonSha, mode: "100644", type: "blob" });
 
-  // 6. Commit everything in one atomic commit
+  // 6. Commit everything to the showcase repo in one atomic commit
   const headSha   = await getRef();
   const treeSha   = await createTree(headSha, newBlobs);
   const commitMsg = `feat: add ${newProjects.map(p => p.title).join(", ")}`;
   const commitSha = await createCommit(commitMsg, treeSha, headSha);
   await updateRef(commitSha);
-  console.log(`\n✅  Committed ${newProjects.length} project(s): ${commitSha}`);
+  console.log(`\n✅  Showcase repo updated: ${commitSha}`);
 
   // 7. Purge Drive originals
   for (const id of driveIdsToDelete) {

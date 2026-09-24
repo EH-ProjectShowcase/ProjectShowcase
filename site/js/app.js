@@ -91,11 +91,9 @@ function displayProjects(data) {
 
                 <div class="buttons">
 
-                    ${project.github ? `<a href="${project.github}" target="_blank">GitHub</a>` : ""}
+                    ${project.github ? `<a href="${project.github}" target="_blank">GitHub Repo</a>` : ""}
 
                     ${project.demo ? `<a href="${project.demo}" target="_blank">Live Demo</a>` : ""}
-
-                    ${project.zipUrl ? `<a href="${project.zipUrl}" class="btn-download" download>⬇ Download .zip</a>` : ""}
 
                 </div>
 

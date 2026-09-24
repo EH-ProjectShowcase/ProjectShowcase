@@ -19,30 +19,35 @@ Student → Google Form → Google Sheet → [you flip Approved = TRUE]
                         Download from              Download from
                         Google Drive               Google Drive
                               │                       │
-                        Compress (JPEG)           Size-check (≤50 MB)
+                        Compress (JPEG)           Unzip in memory
                               │                       │
-                        Commit to repo            Upload to GitHub
-                        (site/images/)            Release asset
+                        Commit to showcase        Create new repo in org
+                        repo (site/images/)       (OrgName/student-project)
+                              │                       │
+                              │                  Commit all unzipped
+                              │                  files + auto-README
                               │                       │
                               └───────────┬───────────┘
                                           │
                                   Update projects.json
-                                  (committed to repo)
+                                  (with repo URL, committed
+                                   to showcase repo)
                                           │
                                   Purge Drive originals
                                           │
                                   GitHub Pages auto-deploys
 ```
 
-## Why screenshots go into Git but zips go into GitHub Releases
+## Why each project gets its own repo
 
-| Concern | Screenshot | Zip |
+| Concern | Old approach (Release zips) | New approach (Org repos) |
 |---|---|---|
-| **Typical size** | 50–200 KB (after JPEG compression) | 1–50 MB |
-| **Git history impact** | Negligible | Bloats every future `git clone` |
-| **Needs inline rendering** | Yes (card image) | No (download link) |
-| **Storage mechanism** | Git blob → committed to repo | GitHub Release asset → outside Git history |
-| **URL stored in JSON** | Relative path (`images/slug.jpg`) | Absolute URL (`https://github.com/…/releases/download/…`) |
+| **Browsability** | Must download zip to see code | Code visible on GitHub directly |
+| **Student credit** | Just a download link | Real GitHub repo they can link on résumé |
+| **Forkability** | None | Anyone can fork, star, or contribute |
+| **Searchability** | Not indexed | GitHub-indexed, searchable |
+| **Showcase repo size** | Bloated if zips were committed | Zero bloat — each project is separate |
+| **Organization** | Flat release list | One repo per project under the org |
 
 ## Key files
 
@@ -64,16 +69,15 @@ The sync script reads these column headers from the sheet (order doesn't matter)
 | Column header | Required | Notes |
 |---|---|---|
 | `Approved` | ✅ | You add this column manually; set to `TRUE` to publish |
-| `Your Full Name` | ✅ | |
+| `Student Full Name` | ✅ | |
+| `Student Email Address` | | |
 | `Project Title` | ✅ | |
-| `Department` | | |
-| `Batch` | | |
-| `Short Description` | | |
-| `Tech Stack` | | Comma-separated or JSON array |
-| `Source Code URL` | | GitHub link |
+| `Project Domain` | | Comma-separated or JSON array |
+| `Project Description` | | |
+| `GitHub / Source Code URL` | | Optional manually-provided GitHub link |
 | `Live / Demo URL` | | |
-| `Screenshot (upload)` | | Google Drive file upload |
-| `Implementation (.zip)` | | Google Drive file upload, max 50 MB |
+| `Upload Project Screenshots or Images` | | Google Drive file upload |
+| `Upload Project Source Code (Zip file)` | | Google Drive file upload, max 50 MB |
 
 ## Secrets needed in GitHub repo settings
 
@@ -81,4 +85,5 @@ The sync script reads these column headers from the sheet (order doesn't matter)
 |---|---|
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | Full JSON key for a GCP service account with Sheets + Drive access |
 | `SHEET_ID` | The Google Sheets spreadsheet ID (from the URL) |
-| `GITHUB_TOKEN` | Auto-provided by Actions, but can be overridden with a PAT if needed |
+| `GH_PAT` | Personal Access Token (classic) with `repo` scope — needed to create repos in the org |
+| `ORG_NAME` | The GitHub Organization name where project repos are created |
