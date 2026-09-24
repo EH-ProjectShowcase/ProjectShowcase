@@ -75,6 +75,21 @@ async function downloadDriveFile(fileId) {
   return Buffer.from(res.data);
 }
 
+/**
+ * Bypass Google Drive's large-file virus-scan warning page.
+ * Drive returns an HTML "Download anyway?" page for files it can't scan.
+ * The bypass is to pass `confirm=1` (same as the "Download anyway" button),
+ * using a fresh OAuth token from the same auth client.
+ */
+async function downloadDriveFileWithConfirm(fileId) {
+  const tokenRes = await auth.getAccessToken();
+  const token = tokenRes.token;
+  const url = `https://drive.google.com/uc?export=download&confirm=1&id=${fileId}`;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) throw new Error(`Drive confirm download failed: HTTP ${res.status}`);
+  return Buffer.from(await res.arrayBuffer());
+}
+
 /** Compress an image buffer: resize to MAX_WIDTH, output JPEG. */
 async function compressImage(buf) {
   return sharp(buf)
@@ -282,6 +297,55 @@ async function commitZipToRepo(targetRepo, zipBuffer, { title, studentName, summ
   return commit.sha;
 }
 
+/**
+ * Commit a minimal README.md to a newly-created but otherwise empty repo.
+ * Used as a fallback when a student's zip file is empty or unreadable.
+ */
+async function commitFallbackReadme(targetRepo, { title, studentName, summary, tech }) {
+  const readme = [
+    `# ${title}`,
+    "",
+    `**Student:** ${studentName}`,
+    tech.length ? `**Tech Stack:** ${tech.join(", ")}` : "",
+    "",
+    summary || "_No description provided._",
+    "",
+    "---",
+    `*This repository was automatically created by the [Project Showcase](https://github.com/${owner}/${repo}) pipeline.*`,
+    "",
+  ].filter(line => line !== undefined).join("\n");
+
+  const { data: blob } = await octokit.git.createBlob({
+    owner: orgName,
+    repo: targetRepo,
+    content: Buffer.from(readme).toString("base64"),
+    encoding: "base64",
+  });
+
+  const { data: tree } = await octokit.git.createTree({
+    owner: orgName,
+    repo: targetRepo,
+    tree: [{ path: "README.md", mode: "100644", type: "blob", sha: blob.sha }],
+  });
+
+  const { data: commit } = await octokit.git.createCommit({
+    owner: orgName,
+    repo: targetRepo,
+    message: `chore: add fallback README — ${title}`,
+    tree: tree.sha,
+    parents: [],
+  });
+
+  await octokit.git.createRef({
+    owner: orgName,
+    repo: targetRepo,
+    ref: "refs/heads/main",
+    sha: commit.sha,
+  });
+
+  console.log(`  📄  Fallback README committed to ${orgName}/${targetRepo}`);
+}
+
 // ── Main ──────────────────────────────────────────────────────────────
 async function main() {
   // 1. Fetch sheet data
@@ -384,7 +448,15 @@ async function main() {
     if (zipDriveId) {
       try {
         console.log(`  📥  Downloading zip from Drive…`);
-        const zipBuffer = await downloadDriveFile(zipDriveId);
+        let zipBuffer = await downloadDriveFile(zipDriveId);
+
+        // Google Drive returns an HTML "virus scan warning" page for large files
+        // instead of the actual content. Detect and bypass it.
+        const prefix = zipBuffer.slice(0, 5).toString("utf8");
+        if (prefix.startsWith("<!DOC") || prefix.startsWith("<html")) {
+          console.log(`  🔄  Drive returned HTML (large-file warning) — retrying with confirm bypass…`);
+          zipBuffer = await downloadDriveFileWithConfirm(zipDriveId);
+        }
 
         // Size gate
         if (zipBuffer.length > MAX_ZIP_BYTES) {
@@ -392,23 +464,48 @@ async function main() {
           console.warn(`  ⚠  Zip is ${sizeMB} MB — exceeds ${MAX_ZIP_BYTES / 1024 / 1024} MB cap. Skipping.`);
         } else {
           const sizeMB = (zipBuffer.length / 1024 / 1024).toFixed(1);
-          console.log(`  📦  Zip downloaded (${sizeMB} MB) — creating org repo…`);
+          console.log(`  📦  Zip downloaded (${sizeMB} MB).`);
 
-          // Create the repo in the org
-          projectRepoUrl = await createProjectRepo(slug, title, summary, name, tech);
+          // ── Validate the zip BEFORE creating the repo ──────────
+          // This ensures we never create a blank repo: if the zip is
+          // unreadable or empty, we log and skip rather than leaving
+          // an empty shell behind.
+          let zipValid = false;
+          try {
+            const testZip = new AdmZip(zipBuffer);
+            const testEntries = testZip.getEntries().filter(e => !e.isDirectory);
+            if (testEntries.length === 0) {
+              console.warn(`  ⚠  Zip appears empty (no files found) — skipping repo creation.`);
+            } else {
+              zipValid = true;
+              console.log(`  ✅  Zip looks valid (${testEntries.length} file(s)) — creating org repo…`);
+            }
+          } catch (zipErr) {
+            console.warn(`  ⚠  Zip is invalid or corrupted: ${zipErr.message} — skipping repo creation.`);
+          }
 
-          // Unzip and commit all files
-          const commitSha = await commitZipToRepo(slug, zipBuffer, {
-            title, studentName: name, summary, tech,
-          });
+          if (zipValid) {
+            // Create the repo in the org only now that we know the zip is good
+            projectRepoUrl = await createProjectRepo(slug, title, summary, name, tech);
 
-          if (commitSha) {
-            driveIdsToDelete.push(zipDriveId);
-            console.log(`  🎉  Source code live at ${projectRepoUrl}`);
+            // Unzip and commit all files
+            const commitSha = await commitZipToRepo(slug, zipBuffer, {
+              title, studentName: name, summary, tech,
+            });
+
+            if (commitSha) {
+              driveIdsToDelete.push(zipDriveId);
+              console.log(`  🎉  Source code live at ${projectRepoUrl}`);
+            } else {
+              // Shouldn't normally reach here given zipValid check above,
+              // but guard anyway with a fallback README.
+              console.warn(`  ⚠  Commit returned null unexpectedly — writing fallback README.`);
+              await commitFallbackReadme(slug, { title, studentName: name, summary, tech });
+            }
           }
         }
       } catch (err) {
-        console.warn(`  ⚠  Failed to create project repo (Drive ID: ${zipDriveId}): ${err.message}`);
+        console.warn(`  ⚠  Failed processing zip for "${title}" (Drive ID: ${zipDriveId}): ${err.message}`);
         console.warn(`      💡 Ensure the GH_PAT has 'repo' scope and your account can create repos in the "${orgName}" org.`);
         console.warn(`      💡 Also ensure the Form's Drive upload folder is shared with the service account.`);
       }
