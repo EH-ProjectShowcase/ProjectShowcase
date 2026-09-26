@@ -149,6 +149,21 @@ async function createProjectRepo(slug, title, summary, studentName, tech) {
   try {
     const { data } = await octokit.repos.get({ owner: orgName, repo: slug });
     console.log(`  📁  Repo ${orgName}/${slug} already exists → ${data.html_url}`);
+
+    // If existing repo is empty (no commits), initialize it with an initial README
+    try {
+      await octokit.git.getRef({ owner: orgName, repo: slug, ref: "heads/main" });
+    } catch (refErr) {
+      console.log(`  🌱  Existing repo ${orgName}/${slug} is empty — initializing via Contents API…`);
+      await octokit.repos.createOrUpdateFileContents({
+        owner: orgName,
+        repo: slug,
+        path: "README.md",
+        message: "Initial commit",
+        content: Buffer.from(`# ${title}\n`).toString("base64"),
+      });
+    }
+
     return data.html_url;
   } catch (err) {
     if (err.status !== 404) throw err;
@@ -187,6 +202,30 @@ async function createProjectRepo(slug, title, summary, studentName, tech) {
  * Returns the commit SHA, or null if the zip was empty.
  */
 async function commitZipToRepo(targetRepo, zipBuffer, { title, studentName, summary, tech }) {
+  // ── Step 0: Ensure repository is initialized BEFORE creating any blobs ──
+  // GitHub's Git Data API (createBlob, createTree, etc.) returns 409 "Git Repository is empty"
+  // if called on a bare repo. We must ensure at least one commit exists first.
+  let parentSha = null;
+  const branchName = "main";
+  try {
+    const { data: refData } = await octokit.git.getRef({
+      owner: orgName,
+      repo: targetRepo,
+      ref: `heads/${branchName}`,
+    });
+    parentSha = refData.object.sha;
+  } catch (err) {
+    console.log(`  🌱  Repo is uninitialized — creating initial README.md via Contents API…`);
+    const { data: initData } = await octokit.repos.createOrUpdateFileContents({
+      owner: orgName,
+      repo: targetRepo,
+      path: "README.md",
+      message: "Initial commit",
+      content: Buffer.from(`# ${title}\n\nInitializing repository...`).toString("base64"),
+    });
+    parentSha = initData.commit.sha;
+  }
+
   const zip = new AdmZip(zipBuffer);
   const entries = zip.getEntries();
 
@@ -268,30 +307,6 @@ async function commitZipToRepo(targetRepo, zipBuffer, { title, studentName, summ
   }
 
   console.log(`  📄  ${treeItems.length} file(s) to commit`);
-
-  // ── Ensure repository has an initial commit and branch ref ────
-  let parentSha = null;
-  const branchName = "main";
-  try {
-    const { data: refData } = await octokit.git.getRef({
-      owner: orgName,
-      repo: targetRepo,
-      ref: `heads/${branchName}`,
-    });
-    parentSha = refData.object.sha;
-  } catch (err) {
-    // If repo was created empty/bare without commits, getRef fails (409 or 404).
-    // Initialize it by creating an initial README via the Contents API.
-    console.log(`  🌱  Repo is uninitialized — creating initial README.md via Contents API…`);
-    const { data: initData } = await octokit.repos.createOrUpdateFileContents({
-      owner: orgName,
-      repo: targetRepo,
-      path: "README.md",
-      message: "Initial commit",
-      content: Buffer.from(`# ${title}\n\nInitializing repository...`).toString("base64"),
-    });
-    parentSha = initData.commit.sha;
-  }
 
   // ── Create tree → commit → update branch ref ──────────────────
   // No base_tree because treeItems represents the full project files at root
