@@ -170,7 +170,7 @@ async function createProjectRepo(slug, title, summary, studentName, tech) {
     has_issues: false,
     has_projects: false,
     has_wiki: false,
-    auto_init: false,  // we create the initial commit ourselves
+    auto_init: true,  // initialize with README so repo is not bare/empty
   });
 
   console.log(`  📁  Created repo ${orgName}/${slug} → ${data.html_url}`);
@@ -269,8 +269,32 @@ async function commitZipToRepo(targetRepo, zipBuffer, { title, studentName, summ
 
   console.log(`  📄  ${treeItems.length} file(s) to commit`);
 
-  // ── Create tree → commit → branch ref ─────────────────────────
-  // No base_tree because this is the initial commit (empty repo)
+  // ── Ensure repository has an initial commit and branch ref ────
+  let parentSha = null;
+  const branchName = "main";
+  try {
+    const { data: refData } = await octokit.git.getRef({
+      owner: orgName,
+      repo: targetRepo,
+      ref: `heads/${branchName}`,
+    });
+    parentSha = refData.object.sha;
+  } catch (err) {
+    // If repo was created empty/bare without commits, getRef fails (409 or 404).
+    // Initialize it by creating an initial README via the Contents API.
+    console.log(`  🌱  Repo is uninitialized — creating initial README.md via Contents API…`);
+    const { data: initData } = await octokit.repos.createOrUpdateFileContents({
+      owner: orgName,
+      repo: targetRepo,
+      path: "README.md",
+      message: "Initial commit",
+      content: Buffer.from(`# ${title}\n\nInitializing repository...`).toString("base64"),
+    });
+    parentSha = initData.commit.sha;
+  }
+
+  // ── Create tree → commit → update branch ref ──────────────────
+  // No base_tree because treeItems represents the full project files at root
   const { data: tree } = await octokit.git.createTree({
     owner: orgName,
     repo: targetRepo,
@@ -282,15 +306,16 @@ async function commitZipToRepo(targetRepo, zipBuffer, { title, studentName, summ
     repo: targetRepo,
     message: `feat: initial commit — ${title}`,
     tree: tree.sha,
-    parents: [],   // initial commit has no parents
+    parents: parentSha ? [parentSha] : [],
   });
 
-  // Create the main branch pointing to this commit
-  await octokit.git.createRef({
+  // Update the branch pointing to this commit
+  await octokit.git.updateRef({
     owner: orgName,
     repo: targetRepo,
-    ref: "refs/heads/main",
+    ref: `heads/${branchName}`,
     sha: commit.sha,
+    force: true,
   });
 
   console.log(`  ✅  Committed ${treeItems.length} files to ${orgName}/${targetRepo} (${commit.sha.slice(0, 7)})`);
@@ -315,32 +340,23 @@ async function commitFallbackReadme(targetRepo, { title, studentName, summary, t
     "",
   ].filter(line => line !== undefined).join("\n");
 
-  const { data: blob } = await octokit.git.createBlob({
-    owner: orgName,
-    repo: targetRepo,
-    content: Buffer.from(readme).toString("base64"),
-    encoding: "base64",
-  });
+  let existingSha;
+  try {
+    const { data: existingFile } = await octokit.repos.getContent({
+      owner: orgName,
+      repo: targetRepo,
+      path: "README.md",
+    });
+    existingSha = existingFile.sha;
+  } catch { /* file doesn't exist yet */ }
 
-  const { data: tree } = await octokit.git.createTree({
+  await octokit.repos.createOrUpdateFileContents({
     owner: orgName,
     repo: targetRepo,
-    tree: [{ path: "README.md", mode: "100644", type: "blob", sha: blob.sha }],
-  });
-
-  const { data: commit } = await octokit.git.createCommit({
-    owner: orgName,
-    repo: targetRepo,
+    path: "README.md",
     message: `chore: add fallback README — ${title}`,
-    tree: tree.sha,
-    parents: [],
-  });
-
-  await octokit.git.createRef({
-    owner: orgName,
-    repo: targetRepo,
-    ref: "refs/heads/main",
-    sha: commit.sha,
+    content: Buffer.from(readme).toString("base64"),
+    ...(existingSha ? { sha: existingSha } : {}),
   });
 
   console.log(`  📄  Fallback README committed to ${orgName}/${targetRepo}`);
