@@ -30,5 +30,41 @@
     "github": "#",
     "demo": "",
     "image": "images/default.webp"
+  },
+  {
+    "id": "test-dep",
+    "title": "Dep",
+    "student": "Test",
+    "email": "tested@gmail.com",
+    "domain": [
+      "Data Science"
+    ],
+    "summary": "it is like this",
+    "image": "images/default.webp",
+    "github": "https://github.com/EH-ProjectShowcase/test-dep"
+  },
+  {
+    "id": "dsfdsf-xgfgdfgd",
+    "title": "xgfgdfgd",
+    "student": "dsfdsf",
+    "email": "dfsdffds",
+    "domain": [
+      "Data Science"
+    ],
+    "summary": "fdggdgd",
+    "image": "images/default.webp",
+    "github": "https://github.com/EH-ProjectShowcase/dsfdsf-xgfgdfgd"
+  },
+  {
+    "id": "hfgh-xgfgdfgd",
+    "title": "xgfgdfgd",
+    "student": "hfgh",
+    "email": "dfsdffdsfhfhf",
+    "domain": [
+      "Data Sciencefggffd"
+    ],
+    "summary": "fdggdgd",
+    "image": "images/default.webp",
+    "github": "https://github.com/EH-ProjectShowcase/hfgh-xgfgdfgd"
   }
 ]
