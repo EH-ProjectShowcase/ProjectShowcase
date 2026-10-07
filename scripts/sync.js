@@ -207,14 +207,21 @@ async function commitZipToRepo(targetRepo, zipBuffer, { title, studentName, summ
   // if called on a bare repo. We must ensure at least one commit exists first.
   let parentSha = null;
   const branchName = "main";
-  try {
-    const { data: refData } = await octokit.git.getRef({
-      owner: orgName,
-      repo: targetRepo,
-      ref: `heads/${branchName}`,
-    });
-    parentSha = refData.object.sha;
-  } catch (err) {
+  // A freshly auto_init'ed repo can take a few seconds before its ref is visible,
+  // so retry before concluding the repo is genuinely empty.
+  for (let attempt = 1; attempt <= 5 && !parentSha; attempt++) {
+    try {
+      const { data: refData } = await octokit.git.getRef({
+        owner: orgName,
+        repo: targetRepo,
+        ref: `heads/${branchName}`,
+      });
+      parentSha = refData.object.sha;
+    } catch (err) {
+      if (attempt < 5) await new Promise(r => setTimeout(r, 2000));
+    }
+  }
+  if (!parentSha) {
     console.log(`  🌱  Repo is uninitialized — creating initial README.md via Contents API…`);
     const { data: initData } = await octokit.repos.createOrUpdateFileContents({
       owner: orgName,
@@ -548,8 +555,9 @@ async function main() {
       } catch (err) {
         // ── FIX: do NOT add to projects.json on any error — retries next run ──
         console.warn(`  ❌  Failed processing zip for "${title}": ${err.message}`);
-        console.warn(`      💡 Most likely cause: the Drive upload folder is NOT shared with`);
-        console.warn(`         your service account. Share the folder and it will work next run.`);
+        if (/not found|404|403|permission/i.test(err.message)) {
+          console.warn(`      💡 Likely cause: the Drive upload folder is NOT shared with your service account.`);
+        }
         console.warn(`      ⏭  NOT adding to projects.json — will retry on next sync run.`);
         continue;
       }
