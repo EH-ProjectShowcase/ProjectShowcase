@@ -1,1 +1,14 @@
-
+[
+  {
+    "id": "rahul-sinha-dc1-vulnhub",
+    "title": "DC1_VulnHub",
+    "student": "Rahul Sinha",
+    "email": "rahul.sinha517@nmims.in",
+    "domain": [
+      "Cybersecurity"
+    ],
+    "summary": "To perform a penetration test on a deliberately vulnerable lab target in a controlled\nenvironment. The project will cover reconnaissance, service and application\nenumeration, exploitation of a suitable vulnerability, post-exploitation, and privilege\nescalation. The work will follow a basic penetration testing approach and will focus on\nunderstanding how a vulnerability can be identified, exploited, and addressed.",
+    "image": "images/rahul-sinha-dc1-vulnhub.jpg",
+    "github": "https://github.com/EH-ProjectShowcase/rahul-sinha-dc1-vulnhub"
+  }
+]
