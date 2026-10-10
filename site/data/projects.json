@@ -78,5 +78,17 @@
     "summary": "idk",
     "image": "images/default.webp",
     "github": "https://github.com/EH-ProjectShowcase/testingggg-domain-expanstion"
+  },
+  {
+    "id": "testi-domain",
+    "title": "DOMAIN",
+    "student": "Testi",
+    "email": "testings@gmail.com",
+    "domain": [
+      "Artificial Intelligence and Machine Learning"
+    ],
+    "summary": "idk",
+    "image": "images/testi-domain.jpg",
+    "github": "https://github.com/EH-ProjectShowcase/testi-domain"
   }
 ]
